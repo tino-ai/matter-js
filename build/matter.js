@@ -1631,6 +1631,7 @@ var Axes = __webpack_require__(11);
             position: { x: 0, y: 0 },
             force: { x: 0, y: 0 },
             torque: 0,
+            gravityScale: 1,
             positionImpulse: { x: 0, y: 0 },
             constraintImpulse: { x: 0, y: 0, angle: 0 },
             totalContacts: 0,
@@ -1843,18 +1844,19 @@ var Axes = __webpack_require__(11);
     Body.setStatic = function(body, isStatic) {
         for (var i = 0; i < body.parts.length; i++) {
             var part = body.parts[i];
-            part.isStatic = isStatic;
 
             if (isStatic) {
-                part._original = {
-                    restitution: part.restitution,
-                    friction: part.friction,
-                    mass: part.mass,
-                    inertia: part.inertia,
-                    density: part.density,
-                    inverseMass: part.inverseMass,
-                    inverseInertia: part.inverseInertia
-                };
+                if (!part.isStatic) {
+                    part._original = {
+                        restitution: part.restitution,
+                        friction: part.friction,
+                        mass: part.mass,
+                        inertia: part.inertia,
+                        density: part.density,
+                        inverseMass: part.inverseMass,
+                        inverseInertia: part.inverseInertia
+                    };
+                }
 
                 part.restitution = 0;
                 part.friction = 1;
@@ -1879,6 +1881,8 @@ var Axes = __webpack_require__(11);
 
                 part._original = null;
             }
+
+            part.isStatic = isStatic;
         }
     };
 
@@ -1959,10 +1963,17 @@ var Axes = __webpack_require__(11);
     };
 
     /**
-     * Sets the parts of the `body` and updates mass, inertia and centroid.
-     * Each part will have its parent set to `body`.
-     * By default the convex hull will be automatically computed and set on `body`, unless `autoHull` is set to `false.`
-     * Note that this method will ensure that the first part in `body.parts` will always be the `body`.
+     * Sets the parts of the `body`. 
+     * 
+     * See `body.parts` for details and requirements on how parts are used.
+     * 
+     * See Bodies.fromVertices for a related utility.
+     * 
+     * This function updates `body` mass, inertia and centroid based on the parts geometry.  
+     * Sets each `part.parent` to be this `body`.  
+     * 
+     * The convex hull is computed and set on this `body` (unless `autoHull` is `false`).  
+     * Automatically ensures that the first part in `body.parts` is the `body`.
      * @method setParts
      * @param {body} body
      * @param {body[]} parts
@@ -2076,6 +2087,16 @@ var Axes = __webpack_require__(11);
             Bounds.update(part.bounds, part.vertices, body.velocity);
         }
     };
+
+    /**
+     * Sets the gravity scale of the body
+     * @method setAngle
+     * @param {body} body
+     * @param {number} scale
+     */
+    Body.setGravityScale = function (body, scale) {
+        body.gravityScale = scale
+    }
 
     /**
      * Sets the angle of the body. By default angular velocity is unchanged.
@@ -2329,8 +2350,9 @@ var Axes = __webpack_require__(11);
             velocityPrevY = (body.position.y - body.positionPrev.y) * correction;
 
         // update velocity with Verlet integration
-        body.velocity.x = (velocityPrevX * frictionAir) + (body.force.x / body.mass) * deltaTimeSquared;
-        body.velocity.y = (velocityPrevY * frictionAir) + (body.force.y / body.mass) * deltaTimeSquared;
+        body.velocity.x = (velocityPrevX * frictionAir * correction) + (body.force.x / body.mass) * deltaTimeSquared * body.gravityScale;
+        body.velocity.y = (velocityPrevY * frictionAir * correction) + (body.force.y / body.mass) * deltaTimeSquared * body.gravityScale;
+
 
         body.positionPrev.x = body.position.x;
         body.positionPrev.y = body.position.y;
@@ -2505,12 +2527,28 @@ var Axes = __webpack_require__(11);
     /**
      * _Read only_. Use `Body.setParts` to set. 
      * 
-     * An array of bodies that make up this body. 
-     * The first body in the array must always be a self reference to the current body instance.
-     * All bodies in the `parts` array together form a single rigid compound body.
-     * Parts are allowed to overlap, have gaps or holes or even form concave bodies.
-     * Parts themselves should never be added to a `World`, only the parent body should be.
-     * Use `Body.setParts` when setting parts to ensure correct updates of all properties.
+     * See `Bodies.fromVertices` for a related utility.
+     * 
+     * An array of bodies (the 'parts') that make up this body (the 'parent'). The first body in this array must always be a self-reference to this `body`.  
+     * 
+     * The parts are fixed together and therefore perform as a single unified rigid body.
+     * 
+     * Parts in relation to each other are allowed to overlap, as well as form gaps or holes, so can be used to create complex concave bodies unlike when using a single part. 
+     * 
+     * Use properties and functions on the parent `body` rather than on parts.
+     *   
+     * Outside of their geometry, most properties on parts are not considered or updated.  
+     * As such 'per-part' material properties among others are not currently considered.
+     * 
+     * Parts should be created specifically for their parent body.  
+     * Parts should not be shared or reused between bodies, only one parent is supported.  
+     * Parts should not have their own parts, they are not handled recursively.  
+     * Parts should not be added to the world directly or any other composite.  
+     * Parts own vertices must be convex and in clockwise order.   
+     * 
+     * A body with more than one part is sometimes referred to as a 'compound' body. 
+     * 
+     * Use `Body.setParts` when setting parts to ensure correct updates of all properties.  
      *
      * @readOnly
      * @property parts
@@ -3018,6 +3056,19 @@ var Axes = __webpack_require__(11);
      * 
      * @property bounds
      * @type bounds
+     */
+
+    /**
+     * Temporarily may hold parameters to be passed to `Vertices.chamfer` where supported by external functions.
+     * 
+     * See `Vertices.chamfer` for possible parameters this object may hold.
+     * 
+     * Currently only functions inside `Matter.Bodies` provide a utility using this property as a vertices pre-processing option.
+     * 
+     * Alternatively consider using `Vertices.chamfer` directly on vertices before passing them to a body creation function.
+     * 
+     * @property chamfer
+     * @type object|null|undefined
      */
 
 })();
@@ -4894,6 +4945,33 @@ var Common = __webpack_require__(0);
         };
     };
 
+    /**
+     * Returns the current length of the constraint. 
+     * This is the distance between both of the constraint's end points.
+     * See `constraint.length` for the target rest length.
+     * @method currentLength
+     * @param {constraint} constraint
+     * @returns {number} the current length
+     */
+    Constraint.currentLength = function(constraint) {
+        var pointAX = (constraint.bodyA ? constraint.bodyA.position.x : 0) 
+            + (constraint.pointA ? constraint.pointA.x : 0);
+
+        var pointAY = (constraint.bodyA ? constraint.bodyA.position.y : 0) 
+            + (constraint.pointA ? constraint.pointA.y : 0);
+
+        var pointBX = (constraint.bodyB ? constraint.bodyB.position.x : 0) 
+            + (constraint.pointB ? constraint.pointB.x : 0);
+            
+        var pointBY = (constraint.bodyB ? constraint.bodyB.position.y : 0) 
+            + (constraint.pointB ? constraint.pointB.y : 0);
+
+        var deltaX = pointAX - pointBX;
+        var deltaY = pointAY - pointBY;
+
+        return Math.sqrt(deltaX * deltaX + deltaY * deltaY);
+    };
+
     /*
     *
     *  Properties Documentation
@@ -5177,6 +5255,7 @@ var Vector = __webpack_require__(2);
     
     /**
      * Creates a new rigid body model with a trapezoid hull. 
+     * The `slope` is parameterised as a fraction of `width` and must be < 1 to form a valid trapezoid. 
      * The options parameter is an object that specifies any properties you wish to override the defaults.
      * See the properties section of the `Matter.Body` module for detailed information on what you can pass via the `options` object.
      * @method trapezoid
@@ -5184,12 +5263,16 @@ var Vector = __webpack_require__(2);
      * @param {number} y
      * @param {number} width
      * @param {number} height
-     * @param {number} slope
+     * @param {number} slope Must be a number < 1.
      * @param {object} [options]
      * @return {body} A new trapezoid body
      */
     Bodies.trapezoid = function(x, y, width, height, slope, options) {
         options = options || {};
+
+        if (slope >= 1) {
+            Common.warn('Bodies.trapezoid: slope parameter must be < 1.');
+        }
 
         slope *= 0.5;
         var roof = (1 - (slope * 2)) * width;
@@ -5783,6 +5866,7 @@ var Common = __webpack_require__(0);
         mouse.mousewheel = function(event) {
             mouse.wheelDelta = Math.max(-1, Math.min(1, event.wheelDelta || -event.detail));
             event.preventDefault();
+            mouse.sourceEvents.mousewheel = event;
         };
 
         Mouse.setElement(mouse, mouse.element);
@@ -5799,16 +5883,15 @@ var Common = __webpack_require__(0);
     Mouse.setElement = function(mouse, element) {
         mouse.element = element;
 
-        element.addEventListener('mousemove', mouse.mousemove);
-        element.addEventListener('mousedown', mouse.mousedown);
-        element.addEventListener('mouseup', mouse.mouseup);
+        element.addEventListener('mousemove', mouse.mousemove, { passive: true });
+        element.addEventListener('mousedown', mouse.mousedown, { passive: true });
+        element.addEventListener('mouseup', mouse.mouseup, { passive: true });
         
-        element.addEventListener('mousewheel', mouse.mousewheel);
-        element.addEventListener('DOMMouseScroll', mouse.mousewheel);
-
-        element.addEventListener('touchmove', mouse.mousemove);
-        element.addEventListener('touchstart', mouse.mousedown);
-        element.addEventListener('touchend', mouse.mouseup);
+        element.addEventListener('wheel', mouse.mousewheel, { passive: false });
+        
+        element.addEventListener('touchmove', mouse.mousemove, { passive: false });
+        element.addEventListener('touchstart', mouse.mousedown, { passive: false });
+        element.addEventListener('touchend', mouse.mouseup, { passive: false });
     };
 
     /**
@@ -6352,7 +6435,7 @@ var Body = __webpack_require__(4);
 
     /**
      * Moves the simulation forward in time by `delta` milliseconds.
-     * Triggers `beforeUpdate` and `afterUpdate` events.
+     * Triggers `beforeUpdate`, `beforeSolve` and `afterUpdate` events.
      * Triggers `collisionStart`, `collisionActive` and `collisionEnd` events.
      * @method update
      * @param {engine} engine
@@ -6408,6 +6491,8 @@ var Body = __webpack_require__(4);
             Engine._bodiesUpdate(allBodies, delta);
         }
 
+        Events.trigger(engine, 'beforeSolve', event);
+
         // update all constraints (first pass)
         Constraint.preSolveAll(allBodies);
         for (i = 0; i < engine.constraintIterations; i++) {
@@ -6427,8 +6512,13 @@ var Body = __webpack_require__(4);
             Sleeping.afterCollisions(pairs.list);
 
         // trigger collision events
-        if (pairs.collisionStart.length > 0)
-            Events.trigger(engine, 'collisionStart', { pairs: pairs.collisionStart });
+        if (pairs.collisionStart.length > 0) {
+            Events.trigger(engine, 'collisionStart', { 
+                pairs: pairs.collisionStart,
+                timestamp: timing.timestamp,
+                delta: delta
+            });
+        }
 
         // iteratively resolve position between collisions
         var positionDamping = Common.clamp(20 / engine.positionIterations, 0, 1);
@@ -6456,11 +6546,21 @@ var Body = __webpack_require__(4);
         Engine._bodiesUpdateVelocities(allBodies);
 
         // trigger collision events
-        if (pairs.collisionActive.length > 0)
-            Events.trigger(engine, 'collisionActive', { pairs: pairs.collisionActive });
+        if (pairs.collisionActive.length > 0) {
+            Events.trigger(engine, 'collisionActive', { 
+                pairs: pairs.collisionActive, 
+                timestamp: timing.timestamp,
+                delta: delta
+            });
+        }
 
-        if (pairs.collisionEnd.length > 0)
-            Events.trigger(engine, 'collisionEnd', { pairs: pairs.collisionEnd });
+        if (pairs.collisionEnd.length > 0) {
+            Events.trigger(engine, 'collisionEnd', {
+                pairs: pairs.collisionEnd,
+                timestamp: timing.timestamp,
+                delta: delta
+            });
+        }
 
         // clear force buffers
         Engine._bodiesClearForces(allBodies);
@@ -6600,6 +6700,17 @@ var Body = __webpack_require__(4);
     * Fired just before an update
     *
     * @event beforeUpdate
+    * @param {object} event An event object
+    * @param {number} event.timestamp The engine.timing.timestamp of the event
+    * @param {number} event.delta The delta time in milliseconds value used in the update
+    * @param {engine} event.source The source object of the event
+    * @param {string} event.name The name of the event
+    */
+
+    /**
+    * Fired after bodies updated based on their velocity and forces, but before any collision detection, constraints and resolving etc.
+    *
+    * @event beforeSolve
     * @param {object} event An event object
     * @param {number} event.timestamp The engine.timing.timestamp of the event
     * @param {number} event.delta The delta time in milliseconds value used in the update
@@ -7499,8 +7610,8 @@ var deprecated = Common.deprecated;
      * Create a new composite containing bodies created in the callback in a grid arrangement.
      * This function uses the body's bounds to prevent overlaps.
      * @method stack
-     * @param {number} xx
-     * @param {number} yy
+     * @param {number} x Starting position in X.
+     * @param {number} y Starting position in Y.
      * @param {number} columns
      * @param {number} rows
      * @param {number} columnGap
@@ -7508,10 +7619,10 @@ var deprecated = Common.deprecated;
      * @param {function} callback
      * @return {composite} A new composite containing objects created in the callback
      */
-    Composites.stack = function(xx, yy, columns, rows, columnGap, rowGap, callback) {
+    Composites.stack = function(x, y, columns, rows, columnGap, rowGap, callback) {
         var stack = Composite.create({ label: 'Stack' }),
-            x = xx,
-            y = yy,
+            currentX = x,
+            currentY = y,
             lastBody,
             i = 0;
 
@@ -7519,7 +7630,7 @@ var deprecated = Common.deprecated;
             var maxHeight = 0;
             
             for (var column = 0; column < columns; column++) {
-                var body = callback(x, y, column, row, lastBody, i);
+                var body = callback(currentX, currentY, column, row, lastBody, i);
                     
                 if (body) {
                     var bodyHeight = body.bounds.max.y - body.bounds.min.y,
@@ -7530,19 +7641,19 @@ var deprecated = Common.deprecated;
                     
                     Body.translate(body, { x: bodyWidth * 0.5, y: bodyHeight * 0.5 });
 
-                    x = body.bounds.max.x + columnGap;
+                    currentX = body.bounds.max.x + columnGap;
 
                     Composite.addBody(stack, body);
                     
                     lastBody = body;
                     i += 1;
                 } else {
-                    x += columnGap;
+                    currentX += columnGap;
                 }
             }
             
-            y += maxHeight + rowGap;
-            x = xx;
+            currentY += maxHeight + rowGap;
+            currentX = x;
         }
 
         return stack;
@@ -7640,8 +7751,8 @@ var deprecated = Common.deprecated;
      * Create a new composite containing bodies created in the callback in a pyramid arrangement.
      * This function uses the body's bounds to prevent overlaps.
      * @method pyramid
-     * @param {number} xx
-     * @param {number} yy
+     * @param {number} x Starting position in X.
+     * @param {number} y Starting position in Y.
      * @param {number} columns
      * @param {number} rows
      * @param {number} columnGap
@@ -7649,8 +7760,8 @@ var deprecated = Common.deprecated;
      * @param {function} callback
      * @return {composite} A new composite containing objects created in the callback
      */
-    Composites.pyramid = function(xx, yy, columns, rows, columnGap, rowGap, callback) {
-        return Composites.stack(xx, yy, columns, rows, columnGap, rowGap, function(x, y, column, row, lastBody, i) {
+    Composites.pyramid = function(x, y, columns, rows, columnGap, rowGap, callback) {
+        return Composites.stack(x, y, columns, rows, columnGap, rowGap, function(stackX, stackY, column, row, lastBody, i) {
             var actualRows = Math.min(rows, Math.ceil(columns / 2)),
                 lastBodyWidth = lastBody ? lastBody.bounds.max.x - lastBody.bounds.min.x : 0;
             
@@ -7673,7 +7784,7 @@ var deprecated = Common.deprecated;
 
             var xOffset = lastBody ? column * lastBodyWidth : 0;
             
-            return callback(xx + xOffset + column * columnGap, y, column, row, lastBody, i);
+            return callback(x + xOffset + column * columnGap, stackY, column, row, lastBody, i);
         });
     };
 
@@ -7681,21 +7792,21 @@ var deprecated = Common.deprecated;
      * This has now moved to the [newtonsCradle example](https://github.com/liabru/matter-js/blob/master/examples/newtonsCradle.js), follow that instead as this function is deprecated here.
      * @deprecated moved to newtonsCradle example
      * @method newtonsCradle
-     * @param {number} xx
-     * @param {number} yy
+     * @param {number} x Starting position in X.
+     * @param {number} y Starting position in Y.
      * @param {number} number
      * @param {number} size
      * @param {number} length
      * @return {composite} A new composite newtonsCradle body
      */
-    Composites.newtonsCradle = function(xx, yy, number, size, length) {
+    Composites.newtonsCradle = function(x, y, number, size, length) {
         var newtonsCradle = Composite.create({ label: 'Newtons Cradle' });
 
         for (var i = 0; i < number; i++) {
             var separation = 1.9,
-                circle = Bodies.circle(xx + i * (size * separation), yy + length, size, 
+                circle = Bodies.circle(x + i * (size * separation), y + length, size, 
                     { inertia: Infinity, restitution: 1, friction: 0, frictionAir: 0.0001, slop: 1 }),
-                constraint = Constraint.create({ pointA: { x: xx + i * (size * separation), y: yy }, bodyB: circle });
+                constraint = Constraint.create({ pointA: { x: x + i * (size * separation), y: y }, bodyB: circle });
 
             Composite.addBody(newtonsCradle, circle);
             Composite.addConstraint(newtonsCradle, constraint);
@@ -7710,14 +7821,14 @@ var deprecated = Common.deprecated;
      * This has now moved to the [car example](https://github.com/liabru/matter-js/blob/master/examples/car.js), follow that instead as this function is deprecated here.
      * @deprecated moved to car example
      * @method car
-     * @param {number} xx
-     * @param {number} yy
+     * @param {number} x Starting position in X.
+     * @param {number} y Starting position in Y.
      * @param {number} width
      * @param {number} height
      * @param {number} wheelSize
      * @return {composite} A new composite car body
      */
-    Composites.car = function(xx, yy, width, height, wheelSize) {
+    Composites.car = function(x, y, width, height, wheelSize) {
         var group = Body.nextGroup(true),
             wheelBase = 20,
             wheelAOffset = -width * 0.5 + wheelBase,
@@ -7725,7 +7836,7 @@ var deprecated = Common.deprecated;
             wheelYOffset = 0;
     
         var car = Composite.create({ label: 'Car' }),
-            body = Bodies.rectangle(xx, yy, width, height, { 
+            body = Bodies.rectangle(x, y, width, height, { 
                 collisionFilter: {
                     group: group
                 },
@@ -7735,14 +7846,14 @@ var deprecated = Common.deprecated;
                 density: 0.0002
             });
     
-        var wheelA = Bodies.circle(xx + wheelAOffset, yy + wheelYOffset, wheelSize, { 
+        var wheelA = Bodies.circle(x + wheelAOffset, y + wheelYOffset, wheelSize, { 
             collisionFilter: {
                 group: group
             },
             friction: 0.8
         });
                     
-        var wheelB = Bodies.circle(xx + wheelBOffset, yy + wheelYOffset, wheelSize, { 
+        var wheelB = Bodies.circle(x + wheelBOffset, y + wheelYOffset, wheelSize, { 
             collisionFilter: {
                 group: group
             },
@@ -7781,8 +7892,8 @@ var deprecated = Common.deprecated;
      * and the [cloth example](https://github.com/liabru/matter-js/blob/master/examples/cloth.js), follow those instead as this function is deprecated here.
      * @deprecated moved to softBody and cloth examples
      * @method softBody
-     * @param {number} xx
-     * @param {number} yy
+     * @param {number} x Starting position in X.
+     * @param {number} y Starting position in Y.
      * @param {number} columns
      * @param {number} rows
      * @param {number} columnGap
@@ -7793,12 +7904,12 @@ var deprecated = Common.deprecated;
      * @param {} constraintOptions
      * @return {composite} A new composite softBody
      */
-    Composites.softBody = function(xx, yy, columns, rows, columnGap, rowGap, crossBrace, particleRadius, particleOptions, constraintOptions) {
+    Composites.softBody = function(x, y, columns, rows, columnGap, rowGap, crossBrace, particleRadius, particleOptions, constraintOptions) {
         particleOptions = Common.extend({ inertia: Infinity }, particleOptions);
         constraintOptions = Common.extend({ stiffness: 0.2, render: { type: 'line', anchors: false } }, constraintOptions);
 
-        var softBody = Composites.stack(xx, yy, columns, rows, columnGap, rowGap, function(x, y) {
-            return Bodies.circle(x, y, particleRadius, particleOptions);
+        var softBody = Composites.stack(x, y, columns, rows, columnGap, rowGap, function(stackX, stackY) {
+            return Bodies.circle(stackX, stackY, particleRadius, particleOptions);
         });
 
         Composites.mesh(softBody, columns, rows, crossBrace, constraintOptions);
@@ -8642,6 +8753,7 @@ var Mouse = __webpack_require__(14);
                 pixelRatio: 1,
                 background: '#14151f',
                 wireframeBackground: '#14151f',
+                wireframeStrokeStyle: '#bbb',
                 hasBounds: !!options.bounds,
                 enabled: true,
                 wireframes: true,
@@ -8716,6 +8828,8 @@ var Mouse = __webpack_require__(14);
 
             Render.world(render, time);
 
+            render.context.setTransform(render.options.pixelRatio, 0, 0, render.options.pixelRatio, 0, 0);
+
             if (render.options.showStats || render.options.showDebug) {
                 Render.stats(render, render.context, time);
             }
@@ -8723,6 +8837,8 @@ var Mouse = __webpack_require__(14);
             if (render.options.showPerformance || render.options.showDebug) {
                 Render.performance(render, render.context, time);
             }
+
+            render.context.setTransform(1, 0, 0, 1, 0, 0);
         })();
     };
 
@@ -8756,6 +8872,36 @@ var Mouse = __webpack_require__(14);
         canvas.height = options.height * pixelRatio;
         canvas.style.width = options.width + 'px';
         canvas.style.height = options.height + 'px';
+    };
+
+    /**
+     * Sets the render `width` and `height`.
+     * 
+     * Updates the canvas accounting for `render.options.pixelRatio`.  
+     * 
+     * Updates the bottom right render bound `render.bounds.max` relative to the provided `width` and `height`.
+     * The top left render bound `render.bounds.min` isn't changed.
+     * 
+     * Follow this call with `Render.lookAt` if you need to change the render bounds.
+     * 
+     * See also `Render.setPixelRatio`.
+     * @method setSize
+     * @param {render} render
+     * @param {number} width The width (in CSS pixels)
+     * @param {number} height The height (in CSS pixels)
+     */
+    Render.setSize = function(render, width, height) {
+        render.options.width = width;
+        render.options.height = height;
+        render.bounds.max.x = render.bounds.min.x + width;
+        render.bounds.max.y = render.bounds.min.y + height;
+
+        if (render.options.pixelRatio !== 1) {
+            Render.setPixelRatio(render, render.options.pixelRatio);
+        } else {
+            render.canvas.width = width;
+            render.canvas.height = height;
+        }
     };
 
     /**
@@ -9364,7 +9510,7 @@ var Mouse = __webpack_require__(14);
                         c.fill();
                     } else {
                         c.lineWidth = 1;
-                        c.strokeStyle = '#bbb';
+                        c.strokeStyle = render.options.wireframeStrokeStyle;
                         c.stroke();
                     }
                 }
@@ -9423,7 +9569,7 @@ var Mouse = __webpack_require__(14);
         }
 
         c.lineWidth = 1;
-        c.strokeStyle = '#bbb';
+        c.strokeStyle = render.options.wireframeStrokeStyle;
         c.stroke();
     };
 
@@ -10202,12 +10348,21 @@ var Mouse = __webpack_require__(14);
      */
 
     /**
-     * A CSS background color string to use when `render.options.wireframes` is enabled.
+     * A CSS color string to use for background when `render.options.wireframes` is enabled.
      * This may be also set to `'transparent'` or equivalent.
      *
      * @property options.wireframeBackground
      * @type string
      * @default '#14151f'
+     */
+
+    /**
+     * A CSS color string to use for stroke when `render.options.wireframes` is enabled.
+     * This may be also set to `'transparent'` or equivalent.
+     *
+     * @property options.wireframeStrokeStyle
+     * @type string
+     * @default '#bbb'
      */
 
     /**
@@ -10570,7 +10725,7 @@ var Common = __webpack_require__(0);
 
     /**
      * Ends execution of `Runner.run` on the given `runner`, by canceling the animation frame request event loop.
-     * If you wish to only temporarily pause the engine, see `engine.enabled` instead.
+     * If you wish to only temporarily pause the runner, see `runner.enabled` instead.
      * @method stop
      * @param {runner} runner
      */
